@@ -1,15 +1,39 @@
+# Flutter/Dart/Pub related
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Android related
+**/android/**/local.properties
+**/android/**/key.properties
+**/android/.gradle/
+**/android/app/build/
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/gradle/wrapper/gradle-wrapper.jar
+
+# iOS/macOS related
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/macos/Flutter/ephemeral/
+
+# Linux/Windows
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/
+
+# IDE
+.idea/
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+.vscode/
+
+# Root gradle/cache + local machine config
+.gradle/
 local.properties
+android/local.properties
