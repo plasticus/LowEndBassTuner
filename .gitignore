@@ -37,3 +37,4 @@ build/
 .gradle/
 local.properties
 android/local.properties
+.flutter-plugins-dependencies
