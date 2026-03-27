@@ -1,16 +1,15 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 
 class TunerPainter extends CustomPainter {
-  final double cents; // -50 to +50
+  final double cents;
   final bool isLocked;
   final String note;
   final String targetNote;
   final bool isBassMode;
 
   TunerPainter({
-    required this.cents, 
-    required this.isLocked, 
+    required this.cents,
+    required this.isLocked,
     required this.note,
     required this.targetNote,
     required this.isBassMode,
@@ -18,187 +17,130 @@ class TunerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final centerX = size.width / 2;
-    final isLandscape = size.width > size.height;
-    
-    // Geometry Calculation
-    double radius;
-    Offset center;
-    
-    if (isLandscape) {
-       // Landscape: Smaller radius relative to width to fit vertically
-       // Pivot point pushed further down
-       radius = size.width * 0.55; 
-       center = Offset(centerX, size.height + (radius * 0.5));
+    final bool isPortrait = size.height > size.width;
+    final Offset center = Offset(size.width / 2, size.height / 2);
+
+    // Indicator color shifts for tuning, letters stay white
+    Color feedbackColor = _getFeedbackColor();
+
+    // 1. Draw the Background Tape/Tower with Hash Marks
+    // Increased spacing to 25% of screen height/width for better spread
+    final double spacing = isPortrait ? size.height * 0.25 : size.width * 0.3;
+    double currentOffsetInSemis = (cents / 100.0);
+    _drawTape(canvas, size, isPortrait, currentOffsetInSemis, spacing);
+
+    // 2. The Fixed "Target Bar" (The Crosshair)
+    final targetPaint = Paint()
+      ..color = feedbackColor
+      ..strokeWidth = 10
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = MaskFilter.blur(BlurStyle.solid, isLocked ? 8 : 0);
+
+    if (isPortrait) {
+      // Horizontal bar across the vertical tower
+      canvas.drawLine(Offset(0, center.dy), Offset(size.width, center.dy), targetPaint);
     } else {
-       // Portrait
-       radius = size.width * 0.8;
-       center = Offset(centerX, size.height + (radius * 0.3));
-    }
-    
-    // Colors
-    Color primaryColor;
-    if (!isLocked) {
-      primaryColor = Colors.white10;
-    } else if (cents.abs() < 3) {
-      primaryColor = const Color(0xFF00FFFF); // Cyan
-    } else if (cents < 0) {
-      primaryColor = const Color(0xFFFF0055); // Pink/Red
-    } else {
-      primaryColor = const Color(0xFF5500FF); // Purple/Blue
+      // Vertical bar across the horizontal tape
+      canvas.drawLine(Offset(center.dx, 0), Offset(center.dx, size.height), targetPaint);
     }
 
-    // Track
-    final trackPaint = Paint()
-      ..color = Colors.white12
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 15
-      ..strokeCap = StrokeCap.butt;
+    // 3. The Massive HUD Note (The only Solid White element)
+    _drawCenterNote(canvas, size, isPortrait, feedbackColor);
+  }
 
-    final double sweepAngle = isLandscape ? (pi * 0.6) : (pi / 2); 
-    final double startAngle = -pi / 2 - (sweepAngle / 2);
-    final trackRect = Rect.fromCircle(center: center, radius: radius);
-    canvas.drawArc(trackRect, startAngle, sweepAngle, false, trackPaint);
+  void _drawTape(Canvas canvas, Size size, bool isPortrait, double offset, double spacing) {
+    final List<String> allNotes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    int centerNoteIdx = allNotes.indexOf(targetNote.replaceAll(RegExp(r'[0-9]'), ''));
+    if (centerNoteIdx == -1) centerNoteIdx = 0;
 
-    // Ticks
-    final tickPaint = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 2;
-    
-    final int totalTicks = 20; 
-    final double stepAngle = sweepAngle / totalTicks;
-    
-    for (int i = 0; i <= totalTicks; i++) {
-      double angle = startAngle + (i * stepAngle);
-      Offset p1 = center + Offset(cos(angle) * (radius - 10), sin(angle) * (radius - 10));
-      Offset p2 = center + Offset(cos(angle) * (radius + 20), sin(angle) * (radius + 20));
-      
-      // Center Tick
-      if (i == totalTicks / 2) {
-        tickPaint
-          ..color = Colors.white54
-          ..strokeWidth = 4;
-        p1 = center + Offset(cos(angle) * (radius - 20), sin(angle) * (radius - 20));
-        p2 = center + Offset(cos(angle) * (radius + 30), sin(angle) * (radius + 30));
-        
-        // Target Note at Top of Speedometer
-        if (isLocked) {
-           final topTextStyle = TextStyle(
-             color: primaryColor,
-             fontSize: 24,
-             fontWeight: FontWeight.bold,
-             fontFamily: 'Courier'
-           );
-           final topSpan = TextSpan(text: targetNote, style: topTextStyle);
-           final topPainter = TextPainter(text: topSpan, textDirection: TextDirection.ltr);
-           topPainter.layout();
-           
-           // Position above the center tick
-           Offset textPos = center + Offset(cos(angle) * (radius - 50), sin(angle) * (radius - 50)) - Offset(topPainter.width/2, topPainter.height/2);
-           topPainter.paint(canvas, textPos);
-        }
+    // Draw a wide range (-5 to +5) to ensure the screen feels full
+    for (int i = -5; i <= 5; i++) {
+      int currentIdx = (centerNoteIdx + i) % 12;
+      if (currentIdx < 0) currentIdx += 12;
+      String noteName = allNotes[currentIdx];
 
+      double visualOffset = (i - offset) * spacing;
+
+      // Background notes: Now at 40% opacity so they show in Light/Dark mode
+      final textStyle = TextStyle(
+        color: Colors.white.withOpacity(0.4),
+        fontSize: 32,
+        fontWeight: FontWeight.w900,
+        fontFamily: 'Courier',
+      );
+
+      final span = TextSpan(text: noteName, style: textStyle);
+      final tp = TextPainter(text: span, textDirection: TextDirection.ltr)..layout();
+
+      if (isPortrait) {
+        // Positioned at 65% width to keep it clear of the big note on the left
+        double yPos = (size.height / 2) - visualOffset;
+        tp.paint(canvas, Offset(size.width * 0.65 - tp.width / 2, yPos - tp.height / 2));
       } else {
-        tickPaint
-          ..color = Colors.white24
-          ..strokeWidth = 2;
+        // Positioned at 65% height to keep it clear of the big note on top
+        double xPos = (size.width / 2) + visualOffset;
+        tp.paint(canvas, Offset(xPos - tp.width / 2, size.height * 0.65 - tp.height / 2));
       }
-      
-      canvas.drawLine(p1, p2, tickPaint);
+
+      // Draw the quarter-hash marks between the notes
+      if (i < 5) {
+        _drawHashes(canvas, size, isPortrait, i, offset, spacing);
+      }
     }
+  }
 
-    // Active Needle / Arc
-    if (isLocked) {
-      final double normalizedCents = cents.clamp(-50.0, 50.0);
-      final double angleOffset = (normalizedCents / 50.0) * (sweepAngle / 2);
-      final double needleAngle = -pi / 2 + angleOffset;
+  void _drawHashes(Canvas canvas, Size size, bool isPortrait, int noteIndex, double offset, double spacing) {
+    // Hash marks at 20% opacity
+    final hashPaint = Paint()
+      ..color = Colors.white.withOpacity(0.2)
+      ..strokeWidth = 3;
 
-      final activeTrackPaint = Paint()
-        ..color = primaryColor.withOpacity(0.3)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 15;
-        
-      double fillStart = -pi / 2;
-      double fillSweep = angleOffset;
-      canvas.drawArc(trackRect, fillStart, fillSweep, false, activeTrackPaint);
+    for (int h = 1; h <= 3; h++) {
+      double fractionalSemi = noteIndex + (h * 0.25);
+      double visualOffset = (fractionalSemi - offset) * spacing;
 
-      final needlePaint = Paint()
-        ..color = primaryColor
-        ..style = PaintingStyle.fill
-        ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 4);
-
-      final needleLen = 50.0;
-      final tipPos = center + Offset(cos(needleAngle) * (radius - 5), sin(needleAngle) * (radius - 5));
-      final basePos = center + Offset(cos(needleAngle) * (radius - 5 - needleLen), sin(needleAngle) * (radius - 5 - needleLen));
-      
-      final perpAngle = needleAngle + pi/2;
-      final width = 12.0;
-      final pLeft = basePos + Offset(cos(perpAngle)*width, sin(perpAngle)*width);
-      final pRight = basePos - Offset(cos(perpAngle)*width, sin(perpAngle)*width);
-      
-      final needlePath = Path()..moveTo(tipPos.dx, tipPos.dy)..lineTo(pLeft.dx, pLeft.dy)..lineTo(pRight.dx, pRight.dy)..close();
-      canvas.drawPath(needlePath, needlePaint);
+      if (isPortrait) {
+        double y = (size.height / 2) - visualOffset;
+        // Centered hash marks
+        canvas.drawLine(Offset(size.width * 0.45, y), Offset(size.width * 0.65, y), hashPaint);
+      } else {
+        double x = (size.width / 2) + visualOffset;
+        canvas.drawLine(Offset(x, size.height * 0.45), Offset(x, size.height * 0.65), hashPaint);
+      }
     }
+  }
 
-    // HUD Text
-    final textCenter = Offset(centerX, size.height * (isLandscape ? 0.35 : 0.4)); 
+  void _drawCenterNote(Canvas canvas, Size size, bool isPortrait, Color glowColor) {
+    if (!isLocked) return;
 
     final textStyle = TextStyle(
-      color: isLocked ? Colors.white : Colors.white10,
-      fontSize: isLandscape ? 140 : 90, 
+      color: Colors.white,
+      fontSize: isPortrait ? 180 : 140,
       fontWeight: FontWeight.w900,
-      fontFamily: 'Courier', 
-      shadows: isLocked ? [
-        Shadow(color: primaryColor, blurRadius: 40),
-        Shadow(color: primaryColor, blurRadius: 10),
-      ] : [],
+      fontFamily: 'Courier',
+      shadows: [
+        Shadow(color: glowColor.withOpacity(0.5), blurRadius: 40),
+        const Shadow(color: Colors.black, offset: Offset(6, 6)),
+      ],
     );
 
-    final textSpan = TextSpan(text: isLocked ? note : "--", style: textStyle);
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, textCenter - Offset(textPainter.width / 2, textPainter.height / 2));
-    
-    // Cents Readout
-    if (isLocked) {
-      final subStyle = TextStyle(
-        color: primaryColor,
-        fontSize: isLandscape ? 32 : 24,
-        fontFamily: 'Courier',
-        letterSpacing: 4,
-        fontWeight: FontWeight.bold
-      );
-      
-      String centsStr = cents > 0 ? "+${cents.toStringAsFixed(1)}" : cents.toStringAsFixed(1);
-      final subSpan = TextSpan(text: "DEV: $centsStr", style: subStyle);
-      final subPainter = TextPainter(text: subSpan, textDirection: TextDirection.ltr);
-      subPainter.layout();
-      subPainter.paint(canvas, textCenter + Offset(-subPainter.width/2, textPainter.height/2 + (isLandscape ? 20 : 10)));
-    }
-    
-    // Mode Indicator (Bottom of visualization)
-    final modeStyle = TextStyle(
-      color: Colors.white24,
-      fontSize: 12,
-      fontFamily: 'Courier',
-      letterSpacing: 2
-    );
-    final modeText = isBassMode ? "MODE: BASS (6-STR)" : "MODE: CHROMATIC";
-    final modeSpan = TextSpan(text: modeText, style: modeStyle);
-    final modePainter = TextPainter(text: modeSpan, textDirection: TextDirection.ltr);
-    modePainter.layout();
-    modePainter.paint(canvas, Offset(centerX - modePainter.width/2, size.height * 0.85));
+    final span = TextSpan(text: note, style: textStyle);
+    final tp = TextPainter(text: span, textDirection: TextDirection.ltr)..layout();
+
+    // Offset slightly so it's readable from a distance
+    Offset pos = isPortrait
+        ? Offset(size.width * 0.05, size.height / 2 - tp.height / 2)
+        : Offset(size.width / 2 - tp.width / 2, size.height * 0.05);
+
+    tp.paint(canvas, pos);
+  }
+
+  Color _getFeedbackColor() {
+    if (!isLocked) return Colors.white12;
+    if (cents.abs() < 2.5) return const Color(0xFF00FFFF); // Electric Cyan
+    return cents < 0 ? const Color(0xFFFF0055) : const Color(0xFFBB00FF); // Hot Pink vs Neon Purple
   }
 
   @override
-  bool shouldRepaint(covariant TunerPainter oldDelegate) {
-    return oldDelegate.cents != cents || 
-           oldDelegate.isLocked != isLocked || 
-           oldDelegate.note != note ||
-           oldDelegate.targetNote != targetNote ||
-           oldDelegate.isBassMode != isBassMode;
-  }
+  bool shouldRepaint(covariant TunerPainter oldDelegate) => true;
 }

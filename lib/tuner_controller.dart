@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -10,61 +9,38 @@ class TunerController extends ChangeNotifier {
   bool _isListening = false;
   double _pitch = 0.0;
   String _note = "--";
-  String _targetNote = ""; // The intended note (e.g. "E")
+  String _targetNote = "";
   double _cents = 0.0;
   bool _isSignalLocked = false;
   double _volume = 0.0;
-  
-  // Tuning Mode
-  bool _isBassMode = true; // True = Bass (B E A D G C), False = Chromatic
-  
-  // Debug State
+
+  bool _isBassMode = true;
   String _debugStatus = "Initialized";
-  DateTime _lastDebugPrint = DateTime.now();
+  double _sensitivity = 0.5;
+  double _smoothingFactor = 0.15; // RESTORED
 
-  // Control Parameters
-  double _sensitivity = 0.5; 
-  double _smoothingFactor = 0.15; 
+  final List<double> _pitchHistory = [];
+  static const int _historyDepth = 7;
 
-  // Standard Bass Frequencies (6-String: B0 to C3)
-  static const Map<String, double> _bassTunings = {
-    'B': 30.87, // B0
-    'E': 41.20, // E1
-    'A': 55.00, // A1
-    'D': 73.42, // D2
-    'G': 98.00, // G2
-    'C': 130.81 // C3
-  };
+  static const List<String> _noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+  // Getters
   double get pitch => _pitch;
   String get note => _note;
   String get targetNote => _targetNote;
   double get cents => _cents;
   bool get isSignalLocked => _isSignalLocked;
-  bool get isListening => _isListening;
-  double get volume => _volume;
-  String get debugStatus => _debugStatus;
-
   double get sensitivity => _sensitivity;
-  set sensitivity(double val) {
-    _sensitivity = val.clamp(0.0, 1.0);
-    notifyListeners();
-  }
-  
   bool get isBassMode => _isBassMode;
-  set isBassMode(bool val) {
-    _isBassMode = val;
-    notifyListeners();
-  }
+  double get smoothingFactor => _smoothingFactor; // RESTORED
+  String get debugStatus => _debugStatus; // RESTORED
 
-  double get smoothingFactor => _smoothingFactor;
-  set smoothingFactor(double val) {
-    _smoothingFactor = val.clamp(0.01, 1.0);
-    notifyListeners();
-  }
+  set sensitivity(double val) { _sensitivity = val.clamp(0.0, 1.0); notifyListeners(); }
+  set isBassMode(bool val) { _isBassMode = val; notifyListeners(); }
+  set smoothingFactor(double val) { _smoothingFactor = val.clamp(0.01, 1.0); notifyListeners(); } // RESTORED
 
   final List<double> _buffer = [];
-  static const int _processSize = 4096; 
+  static const int _bufferSize = 4096;
 
   void _setDebug(String msg) {
     _debugStatus = msg;
@@ -74,29 +50,21 @@ class TunerController extends ChangeNotifier {
   Future<void> start() async {
     _setDebug("Checking Permissions...");
     var status = await Permission.microphone.request();
-
     if (status != PermissionStatus.granted) {
       _setDebug("Mic Permission Denied");
       return;
     }
-
     try {
       _setDebug("Initializing...");
       await _audioCapture.init();
-      await _audioCapture.start(
-        listener, 
-        onError, 
-        sampleRate: 44100, 
-        bufferSize: 4096
-      );
+      await _audioCapture.start(listener, (e) => {}, sampleRate: 44100, bufferSize: 4096);
       _isListening = true;
       _setDebug("Listening...");
       notifyListeners();
-    } catch (e) {
-      _setDebug("Start Error: $e");
-    }
+    } catch (e) { _setDebug("Error: $e"); }
   }
 
+  // RESTORED: Stop method
   Future<void> stop() async {
     await _audioCapture.stop();
     _isListening = false;
@@ -104,160 +72,91 @@ class TunerController extends ChangeNotifier {
     _note = "--";
     _targetNote = "";
     _cents = 0.0;
-    _volume = 0.0;
+    _pitchHistory.clear();
     _setDebug("Stopped");
     notifyListeners();
   }
 
-  void onError(Object e) {
-    _setDebug("Stream Error: $e");
-  }
-
   void listener(dynamic obj) {
-    List<double> samples = [];
-    if (obj is Float32List) {
-      samples = obj.map((e) => e.toDouble()).toList();
-    } else if (obj is List) {
-       samples = obj.map((e) => (e as num).toDouble()).toList();
-    } else {
-        return; 
-    }
+    if (obj is Float32List) { _buffer.addAll(obj); }
+    else if (obj is List) { _buffer.addAll(obj.map((e) => (e as num).toDouble())); }
 
-    _buffer.addAll(samples);
-
-    if (_buffer.length >= _processSize) {
-      _processAudio(_buffer.sublist(_buffer.length - _processSize));
-      _buffer.clear(); 
+    if (_buffer.length >= _bufferSize) {
+      _processAudioYIN(_buffer.sublist(0, _bufferSize));
+      _buffer.removeRange(0, 1024);
     }
+    if (_buffer.length > 8192) _buffer.clear();
   }
 
-  void _processAudio(List<double> rawSamples) {
-    // 0. Normalize
-    double maxVal = 0.0;
-    for(var s in rawSamples) {
-      if (s.abs() > maxVal) maxVal = s.abs();
+  void _processAudioYIN(List<double> samples) {
+    double sumSq = 0;
+    for (var s in samples) {
+      sumSq += s * s;
     }
-    if (maxVal > 1.0) {
-      for(int i=0; i<rawSamples.length; i++) {
-        rawSamples[i] /= 32768.0;
-      }
-    }
-
-    // 1. Noise Gate
-    double rms = 0;
-    for (var s in rawSamples) rms += s * s;
-    rms = sqrt(rms / rawSamples.length);
-    _volume = rms; 
-    
-    // Threshold
-    double threshold = 0.02 * (1.0 - _sensitivity) + 0.0005; 
-    if (rms < threshold) {
+    _volume = sqrt(sumSq / samples.length);
+    if (_volume < (0.01 * (1.1 - _sensitivity))) {
       _isSignalLocked = false;
+      _pitchHistory.clear();
       notifyListeners();
-      return; 
+      return;
     }
 
-    // 2. LPF (44100 / 4 = 11025Hz)
-    int ds = 4;
-    double fs = 44100 / ds; 
-    List<double> downsampled = [];
-    double alpha = 0.05; 
-    double last = 0;
-    
-    for (int i = 0; i < rawSamples.length; i++) {
-      last = last + alpha * (rawSamples[i] - last);
-      if (i % ds == 0) {
-        downsampled.add(last);
+    int minTau = (44100 / 4000).floor();
+    int maxTau = (44100 / 20).floor();
+    if (maxTau > samples.length / 2) maxTau = (samples.length / 2).floor();
+
+    List<double> yinBuffer = List.filled(maxTau, 0.0);
+    for (int tau = 1; tau < maxTau; tau++) {
+      for (int i = 0; i < maxTau; i++) {
+        double delta = samples[i] - samples[i + tau];
+        yinBuffer[tau] += delta * delta;
       }
     }
 
-    // 3. Autocorrelation
-    int minPeriod = (fs / 400).floor();
-    int maxPeriod = (fs / 20).floor(); 
-    int N = downsampled.length - maxPeriod; 
-    if (N < 100) return; 
-
-    double bestCorr = -1.0;
-    int bestLag = -1;
-
-    for (int lag = minPeriod; lag <= maxPeriod; lag++) {
-       double sum = 0;
-       for (int i = 0; i < N; i++) {
-         sum += downsampled[i] * downsampled[i + lag];
-       }
-       if (sum > bestCorr) {
-         bestCorr = sum;
-         bestLag = lag;
-       }
+    yinBuffer[0] = 1.0;
+    double runningSum = 0;
+    for (int tau = 1; tau < maxTau; tau++) {
+      runningSum += yinBuffer[tau];
+      yinBuffer[tau] *= (tau / runningSum);
     }
 
-    if (bestLag > 0) {
-      // Parabolic Interpolation
-      double y2 = bestCorr;
-      double y1 = 0;
-      for(int i=0; i<N; i++) y1 += downsampled[i] * downsampled[i + bestLag - 1];
-      double y3 = 0;
-      for(int i=0; i<N; i++) y3 += downsampled[i] * downsampled[i + bestLag + 1];
+    int bestTau = -1;
+    double threshold = 0.15;
+    for (int tau = minTau; tau < maxTau; tau++) {
+      if (yinBuffer[tau] < threshold) {
+        bestTau = tau;
+        while (tau + 1 < maxTau && yinBuffer[tau + 1] < yinBuffer[tau]) {
+          tau++;
+          bestTau = tau;
+        }
+        break;
+      }
+    }
 
-      double d = (y1 - y3) / (2 * (y1 - 2 * y2 + y3));
-      double preciseLag = bestLag + d;
-      double freq = fs / preciseLag;
-      
-      if (freq > 20 && freq < 400) {
-          _pitch = freq;
-          _matchNote(freq);
-          _isSignalLocked = true;
-      } else {
+    if (bestTau > 0) {
+      double freq = 44100 / bestTau;
+      if (_isBassMode && freq > 180) {
         _isSignalLocked = false;
+      } else {
+        _pitchHistory.add(freq);
+        if (_pitchHistory.length > _historyDepth) _pitchHistory.removeAt(0);
+
+        List<double> sorted = List.from(_pitchHistory)..sort();
+        _pitch = sorted[sorted.length ~/ 2];
+        _matchNote(_pitch);
+        _isSignalLocked = true;
       }
-    } else {
-      _isSignalLocked = false;
-    }
-    
+    } else { _isSignalLocked = false; }
     notifyListeners();
   }
 
   void _matchNote(double freq) {
-    if (freq <= 0) return;
-
-    if (_isBassMode) {
-      // Bass Logic: Find closest STANDARD bass note
-      String closestNote = "";
-      double minDiff = double.infinity;
-      double closestTargetFreq = 0.0;
-
-      _bassTunings.forEach((name, targetFreq) {
-        // Check simple difference first, but we need to handle octave errors?
-        // Actually, autocorrelation usually finds the fundamental or 2nd harmonic.
-        // Let's assume fundamental for now.
-        double diff = (freq - targetFreq).abs();
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestNote = name;
-          closestTargetFreq = targetFreq;
-        }
-      });
-      
-      // If we are closer to a harmonic, we might be wrong, but let's trust the pitch detector for now.
-      // Calculate cents relative to this target
-      _targetNote = closestNote;
-      _note = closestNote;
-      _cents = 1200 * (log(freq / closestTargetFreq) / log(2));
-      
-    } else {
-      // Chromatic Logic (Standard A440)
-      double n = 12.0 * (log(freq / 440.0) / log(2.0));
-      int semitone = n.round();
-      _cents = (n - semitone) * 100.0;
-
-      const List<String> noteNames = [
-        'A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#'
-      ];
-      int index = semitone % 12;
-      if (index < 0) index += 12;
-      
-      _targetNote = noteNames[index];
-      _note = noteNames[index];
-    }
+    double midi = 12.0 * (log(freq / 440.0) / log(2.0)) + 69.0;
+    int roundedMidi = midi.round();
+    _cents = (midi - roundedMidi) * 100.0;
+    int noteIdx = roundedMidi % 12;
+    if (noteIdx < 0) noteIdx += 12;
+    _note = _noteNames[noteIdx];
+    _targetNote = _note;
   }
 }

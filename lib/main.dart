@@ -222,7 +222,7 @@ class _TunerScreenState extends State<TunerScreen> with TickerProviderStateMixin
               decoration: BoxDecoration(
                 color: widget.isLightMode ? Colors.white.withOpacity(0.9) : Colors.black.withOpacity(0.8),
                 border: Border(top: BorderSide(color: widget.isLightMode ? Colors.black12 : Colors.white12, width: 1)),
-                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -10))]
+                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -10))]
               ),
               child: isPortrait ? _buildPortraitControls() : _buildLandscapeControls(),
             ),
@@ -280,17 +280,20 @@ class _TunerScreenState extends State<TunerScreen> with TickerProviderStateMixin
     );
   }
   
-  Widget _buildLandscapeControls() {
-    return Row(
-      children: [
-        Expanded(child: _buildSwitch("MODE", _controller.isBassMode ? "BASS" : "CHROM", _controller.isBassMode, (v) => _controller.isBassMode = v)),
-        const SizedBox(width: 20),
-        Expanded(child: _buildSwitch("THEME", widget.isLightMode ? "LIGHT" : "DARK", !widget.isLightMode, (v) => widget.onThemeChanged(!v))),
-        const SizedBox(width: 20),
-        Expanded(child: _buildSliderRow("SENS", _controller.sensitivity, (v) => _controller.sensitivity = v)),
-        const SizedBox(width: 20),
-        Expanded(child: _buildSliderRow("SPEED", (_controller.smoothingFactor - 0.01)/0.29, (v) => _controller.smoothingFactor = 0.01 + v*0.29)),
-      ],
+Widget _buildLandscapeControls() {
+    return SingleChildScrollView( // This prevents the 4px overflow
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildSwitch("MODE", _controller.isBassMode ? "BASS" : "CHROM", _controller.isBassMode, (v) => _controller.isBassMode = v),
+          const SizedBox(width: 20),
+          _buildSwitch("THEME", widget.isLightMode ? "LIGHT" : "DARK", !widget.isLightMode, (v) => widget.onThemeChanged(!v)),
+          const SizedBox(width: 20),
+          _buildSliderRow("SENS", _controller.sensitivity, (v) => _controller.sensitivity = v),
+          const SizedBox(width: 20),
+          _buildSliderRow("SPEED", (_controller.smoothingFactor - 0.01)/0.29, (v) => _controller.smoothingFactor = 0.01 + v*0.29),
+        ],
+      ),
     );
   }
   
